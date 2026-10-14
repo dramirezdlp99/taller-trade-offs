@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package neurahealth;
+
+// =====================================================================
+// CONTRATO 3 — Control de la flota de ambulancias
+// Dueño: ambulance-service (servidor) | Consumidor: hospital-dashboard
+// Tipo de RPC: unario (petición → respuesta), sin verbos HTTP ni URLs.
+// =====================================================================
+
+service FleetControlService {
+  rpc StartShift (StartShiftRequest) returns (FleetStatus);
+  rpc StopShift (StopShiftRequest) returns (FleetStatus);
+  rpc TriggerScenario (TriggerScenarioRequest) returns (ScenarioAck);
+  rpc GetFleetStatus (FleetStatusRequest) returns (FleetStatus);
+}
+
+// Situación clínica que el simulador reproduce en un paciente
+enum ClinicalScenario {
+  CLINICAL_SCENARIO_UNSPECIFIED = 0;
+  CLINICAL_SCENARIO_STABLE = 1;
+  CLINICAL_SCENARIO_TACHYARRHYTHMIA = 2;
+  CLINICAL_SCENARIO_HYPOXIA = 3;
+  CLINICAL_SCENARIO_SEPTIC_SHOCK = 4;
+  CLINICAL_SCENARIO_CARDIAC_ARREST = 5;
+  CLINICAL_SCENARIO_SENSOR_FAULT = 6;  // Envía datos imposibles para probar la validación
+}
+
+enum UnitStatus {
+  UNIT_STATUS_UNSPECIFIED = 0;
+  UNIT_STATUS_EN_ROUTE = 1;
+  UNIT_STATUS_ARRIVED = 2;
+}
+
+message StartShiftRequest {
+  int32 unit_count = 1;            // Ambulancias simultáneas (1 a 6)
+  int32 max_duration_seconds = 2;  // El turno se apaga solo al cumplirse
+}
+
+message StopShiftRequest {
+  string reason = 1;
+}
+
+message FleetStatusRequest {}
+
+message AmbulanceUnit {
+  string ambulance_id = 1;
+  string patient_id = 2;
+  string patient_summary = 3;      // Ej.: "Mujer, 67 años · dolor torácico"
+  string origin = 4;               // Barrio desde donde viene
+  ClinicalScenario scenario = 5;
+  UnitStatus status = 6;
+  int32 eta_seconds = 7;
+  int32 packets_sent = 8;
+}
+
+message FleetStatus {
+  bool is_running = 1;
+  repeated AmbulanceUnit units = 2;
+  int64 started_at = 3;
+  int64 ends_at = 4;
+  string message = 5;
+}
+
+message TriggerScenarioRequest {
+  string ambulance_id = 1;
+  ClinicalScenario scenario = 2;
+}
+
+message ScenarioAck {
+  bool accepted = 1;
+  string message = 2;
+}

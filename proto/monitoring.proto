@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package neurahealth;
+
+import "ambulance.proto";
+
+// =====================================================================
+// CONTRATO 2 — Monitoreo del hospital
+// Dueño: hospital-service (servidor) | Consumidor: hospital-dashboard
+// Tipos de RPC: server streaming + unario.
+// =====================================================================
+
+service HospitalMonitoringService {
+  // El dashboard se suscribe una sola vez y el hospital le empuja cada
+  // evento (signos vitales, alertas y paquetes rechazados) en tiempo real.
+  rpc WatchTelemetry (WatchTelemetryRequest) returns (stream TelemetryEvent);
+
+  // Fotografía instantánea del estado del hospital (contadores y métricas)
+  rpc GetHospitalStatus (HospitalStatusRequest) returns (HospitalStatusResponse);
+}
+
+message WatchTelemetryRequest {
+  string subscriber_id = 1;
+}
+
+// Signos vitales ya evaluados por el motor de triaje
+message VitalsSnapshot {
+  VitalSignsRequest vitals = 1;
+  int32 triage_score = 2;
+  Severity severity = 3;
+}
+
+// Paquete descartado porque no superó la validación en tiempo de ejecución
+message RejectedPacket {
+  string ambulance_id = 1;
+  string reason = 2;
+  int64 timestamp = 3;
+}
+
+// Cuántos bytes ocupó el mensaje en binario (Protobuf) vs. en texto (JSON)
+message TransportMetrics {
+  int32 protobuf_bytes = 1;
+  int32 json_bytes = 2;
+}
+
+message TelemetryEvent {
+  oneof payload {
+    VitalsSnapshot snapshot = 1;
+    HospitalAlertResponse alert = 2;
+    RejectedPacket rejected = 3;
+  }
+  TransportMetrics metrics = 4;
+  int64 emitted_at = 5;
+}
+
+message HospitalStatusRequest {}
+
+message HospitalStatusResponse {
+  int32 active_streams = 1;          // Ambulancias conectadas ahora mismo
+  int64 total_messages = 2;
+  int64 total_alerts = 3;
+  int64 rejected_messages = 4;
+  int64 protobuf_bytes_total = 5;
+  int64 json_bytes_total = 6;
+  int64 uptime_seconds = 7;
+  int32 watchers = 8;                // Dashboards suscritos
+}

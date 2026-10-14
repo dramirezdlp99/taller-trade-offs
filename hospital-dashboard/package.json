@@ -1,13 +1,16 @@
 {
   "name": "hospital-dashboard",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Gateway web (BFF): consume los microservicios por gRPC y empuja los datos al navegador por WebSocket.",
+  "main": "dist/Server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "proto:gen": "proto-loader-gen-types --keepCase --longs=String --enums=String --defaults --oneofs --grpcLib=@grpc/grpc-js --includeDirs=../proto --outDir=src/generated ambulance.proto monitoring.proto fleet.proto",
+    "build": "npm run proto:gen && tsc",
+    "start": "node dist/Server.js",
+    "dev": "npm run build && npm start"
   },
   "keywords": [],
-  "author": "",
+  "author": "David Ramírez de la Parra",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
@@ -16,7 +19,8 @@
     "cors": "^2.8.6",
     "dotenv": "^18.0.7",
     "express": "^5.3.0",
-    "socket.io": "^4.8.4"
+    "socket.io": "^4.8.4",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -25,5 +29,8 @@
     "@types/socket.io": "^3.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

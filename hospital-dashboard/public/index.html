@@ -1,201 +1,278 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NeuraHealth | Centro de Comando de Ambulancias (gRPC Core)</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="/socket.io/socket.io.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NeuraHealth | Centro regulador de ambulancias</title>
+  <meta name="description" content="Monitoreo en tiempo real de ambulancias con microservicios gRPC (Protocol Buffers sobre HTTP/2).">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2316242F'/%3E%3Cpath d='M3 17h7l3-8 5 15 3-7h8' fill='none' stroke='%235BE38A' stroke-width='2.6' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Barlow+Semi+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
 </head>
-<body class="bg-[#0b0f19] text-slate-100 font-sans antialiased h-screen flex flex-col overflow-hidden">
+<body>
 
-    <!-- Top Navbar / Header Clínico -->
-    <header class="bg-[#111827] border-b border-slate-800 px-6 py-3 flex justify-between items-center shadow-md shrink-0">
-        <div class="flex items-center space-x-3">
-            <div class="h-3.5 w-3.5 bg-emerald-500 rounded-full animate-ping"></div>
+  <!-- Barra superior: identidad, salud de los microservicios y control del turno -->
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="7"></rect>
+        <path d="M3 17h7l3-8 5 15 3-7h8"></path>
+      </svg>
+      <div class="brand-text">
+        <strong>NeuraHealth</strong>
+        <span>Centro regulador de ambulancias</span>
+      </div>
+    </div>
+
+    <div class="links" aria-label="Estado de los microservicios">
+      <span class="link" data-service="hospitalService" title="Contratos: AmbulanceSyncService y HospitalMonitoringService">
+        <i></i>hospital-service
+      </span>
+      <span class="link" data-service="ambulanceService" title="Contrato: FleetControlService">
+        <i></i>ambulance-service
+      </span>
+    </div>
+
+    <div class="shift">
+      <span id="shift-clock" class="shift-clock">Sin turno activo</span>
+      <label class="visually-hidden" for="unit-count">Ambulancias del turno</label>
+      <select id="unit-count" class="select">
+        <option value="2">2 ambulancias</option>
+        <option value="3">3 ambulancias</option>
+        <option value="4" selected>4 ambulancias</option>
+        <option value="5">5 ambulancias</option>
+        <option value="6">6 ambulancias</option>
+      </select>
+      <button id="shift-toggle" class="btn btn-primary" type="button">Iniciar turno</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Secciones">
+    <button class="tab" role="tab" aria-selected="true" data-view="monitor">Monitor en vivo</button>
+    <button class="tab" role="tab" aria-selected="false" data-view="contracts">Contratos .proto</button>
+    <button class="tab" role="tab" aria-selected="false" data-view="architecture">Arquitectura y trade-offs</button>
+  </nav>
+
+  <main>
+    <!-- ============ VISTA 1: MONITOR ============ -->
+    <section id="view-monitor" class="view view-monitor" role="tabpanel">
+
+      <aside class="panel fleet" aria-labelledby="fleet-title">
+        <header class="panel-head">
+          <h2 id="fleet-title">Ambulancias en ruta</h2>
+          <span id="fleet-count" class="count">0</span>
+        </header>
+        <ul id="fleet-list" class="fleet-list"></ul>
+      </aside>
+
+      <section class="panel monitor" aria-live="off">
+        <div id="monitor-empty" class="empty">
+          <svg viewBox="0 0 120 40" aria-hidden="true"><path d="M0 20h120"></path></svg>
+          <h2>No hay ambulancias en ruta</h2>
+          <p>Inicia un turno para simular traslados hacia urgencias. Cada ambulancia abrirá su propio canal gRPC con el hospital.</p>
+          <button class="btn btn-primary" type="button" data-action="start-shift">Iniciar turno</button>
+        </div>
+
+        <div id="monitor-body" class="monitor-body" hidden>
+          <header class="monitor-head">
             <div>
-                <h1 class="text-base font-bold tracking-wider text-emerald-400">NEURAHEALTH <span class="text-[10px] bg-emerald-950 text-emerald-300 px-2 py-0.5 rounded border border-emerald-800">gRPC streaming (HTTP/2)</span></h1>
-                <p class="text-[11px] text-slate-400">Red Inteligente de Sincronización de Ambulancias</p>
+              <h2 id="m-unit">AMB-UNIT-01</h2>
+              <p id="m-patient" class="patient"></p>
             </div>
+            <div class="eta">
+              <span id="m-eta-label">Llega en</span>
+              <strong id="m-eta">--:--</strong>
+              <small id="m-origin"></small>
+            </div>
+          </header>
+
+          <div class="trace">
+            <canvas id="ecg" aria-label="Electrocardiograma y pletismografía en tiempo real"></canvas>
+            <span class="trace-tag trace-tag-ecg">ECG II</span>
+            <span class="trace-tag trace-tag-pleth">Pleth</span>
+            <span id="m-rhythm" class="trace-rhythm"></span>
+          </div>
+
+          <div class="vitals" id="vitals">
+            <article class="vital" data-param="hr">
+              <h3>Frecuencia cardíaca</h3>
+              <p><strong data-value>--</strong><span>lpm</span></p>
+              <small data-range>Normal 51–90</small>
+            </article>
+            <article class="vital" data-param="spo2">
+              <h3>Saturación O₂</h3>
+              <p><strong data-value>--</strong><span>%</span></p>
+              <small data-range>Normal ≥ 96</small>
+            </article>
+            <article class="vital" data-param="bp">
+              <h3>Presión arterial</h3>
+              <p><strong data-value>--/--</strong><span>mmHg</span></p>
+              <small data-range>Sistólica 111–219</small>
+            </article>
+            <article class="vital" data-param="rr">
+              <h3>Frecuencia resp.</h3>
+              <p><strong data-value>--</strong><span>rpm</span></p>
+              <small data-range>Normal 12–20</small>
+            </article>
+            <article class="vital" data-param="temp">
+              <h3>Temperatura</h3>
+              <p><strong data-value>--</strong><span>°C</span></p>
+              <small data-range>Normal 36.1–38.0</small>
+            </article>
+          </div>
+
+          <div class="triage" id="triage" data-severity="SEVERITY_UNSPECIFIED">
+            <div class="news">
+              <span>NEWS2</span>
+              <strong id="t-score">–</strong>
+              <em id="t-level">Esperando datos</em>
+            </div>
+            <div class="triage-text">
+              <p id="t-action">El hospital calcula el triaje con cada paquete recibido.</p>
+              <p id="t-unit" class="receiving"></p>
+            </div>
+          </div>
+
+          <div class="scenarios">
+            <p>Simular un cambio en este paciente <small>(llamada unaria <code>TriggerScenario</code>)</small></p>
+            <div class="scenario-grid" id="scenarios">
+              <button type="button" class="chip" data-scenario="CLINICAL_SCENARIO_STABLE">Estabilizar</button>
+              <button type="button" class="chip" data-scenario="CLINICAL_SCENARIO_TACHYARRHYTHMIA">Taquiarritmia</button>
+              <button type="button" class="chip" data-scenario="CLINICAL_SCENARIO_HYPOXIA">Hipoxemia</button>
+              <button type="button" class="chip" data-scenario="CLINICAL_SCENARIO_SEPTIC_SHOCK">Shock séptico</button>
+              <button type="button" class="chip chip-danger" data-scenario="CLINICAL_SCENARIO_CARDIAC_ARREST">Paro cardíaco</button>
+              <button type="button" class="chip chip-fault" data-scenario="CLINICAL_SCENARIO_SENSOR_FAULT" title="Envía datos imposibles: el hospital los rechaza con Zod">Falla de sensor</button>
+            </div>
+          </div>
         </div>
-        <div class="flex items-center gap-3 text-xs">
-            <div class="bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800 flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-                <span class="text-slate-400">Unidad Activa:</span> <span id="unit-id" class="text-white font-mono font-bold">AMB-UNIT-01</span>
-            </div>
-        </div>
-    </header>
+      </section>
 
-    <!-- Main Workspace (Grid Principal con altura fija para evitar desbordamientos) -->
-    <main class="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1600px] mx-auto w-full overflow-hidden">
-        
-        <!-- Columna Izquierda: Telemetría de la Ambulancia en Tiempo Real (8 columnas) -->
-        <div class="lg:col-span-8 flex flex-col gap-6 overflow-y-auto pr-2">
-            
-            <!-- Grid de Signos Vitales -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                
-                <!-- Tarjeta Ritmo Cardíaco -->
-                <div class="bg-[#111827]/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl flex flex-col justify-between relative">
-                    <div class="absolute top-0 right-0 bg-slate-800/50 px-3 py-1 text-[10px] font-mono text-slate-400 rounded-bl-xl border-l border-b border-slate-700">
-                        Protobuf: VitalSignsRequest.heart_rate
-                    </div>
-                    <div>
-                        <span class="text-xs uppercase tracking-widest text-slate-400 font-semibold">Ritmo Cardíaco (ECG)</span>
-                        <div class="mt-3 flex items-baseline space-x-2">
-                            <span id="heart-rate-val" class="text-5xl font-black text-emerald-400 tracking-tight">--</span>
-                            <span class="text-slate-400 font-medium text-sm">BPM</span>
-                        </div>
-                    </div>
-                    <div class="mt-5">
-                        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                            <div id="hr-bar" class="bg-emerald-500 h-full transition-all duration-300" style="width: 0%"></div>
-                        </div>
-                        <p id="hr-status" class="text-xs mt-2 text-slate-400">Esperando flujo binario gRPC...</p>
-                    </div>
-                </div>
+      <aside class="panel feed" aria-labelledby="feed-title">
+        <header class="panel-head">
+          <h2 id="feed-title">Alertas del hospital</h2>
+          <label class="toggle">
+            <input type="checkbox" id="only-serious">
+            <span>Solo graves</span>
+          </label>
+        </header>
+        <ol id="alert-list" class="alert-list" aria-live="polite">
+          <li class="alert-empty">Las alertas aparecen cuando un paciente cambia de nivel de triaje.</li>
+        </ol>
+      </aside>
+    </section>
 
-                <!-- Tarjeta Saturación de Oxígeno -->
-                <div class="bg-[#111827]/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl flex flex-col justify-between relative">
-                    <div class="absolute top-0 right-0 bg-slate-800/50 px-3 py-1 text-[10px] font-mono text-slate-400 rounded-bl-xl border-l border-b border-slate-700">
-                        Protobuf: VitalSignsRequest.blood_oxygen
-                    </div>
-                    <div>
-                        <span class="text-xs uppercase tracking-widest text-slate-400 font-semibold">Saturación de Oxígeno (SpO2)</span>
-                        <div class="mt-3 flex items-baseline space-x-2">
-                            <span id="spo2-val" class="text-5xl font-black text-cyan-400 tracking-tight">--</span>
-                            <span class="text-slate-400 font-medium text-sm">%</span>
-                        </div>
-                    </div>
-                    <div class="mt-5">
-                        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                            <div id="spo2-bar" class="bg-cyan-400 h-full transition-all duration-300" style="width: 0%"></div>
-                        </div>
-                        <p id="spo2-status" class="text-xs mt-2 text-slate-400">Canal bidireccional activo</p>
-                    </div>
-                </div>
+    <!-- ============ VISTA 2: CONTRATOS ============ -->
+    <section id="view-contracts" class="view view-contracts" role="tabpanel" hidden>
+      <div class="contracts-intro">
+        <h2>Primero el contrato, después el código</h2>
+        <p>
+          Estos tres archivos son la única fuente de verdad del sistema. A partir de ellos
+          <code>npm run proto:gen</code> genera los tipos de TypeScript de cada microservicio:
+          si alguien cambia un campo, el proyecto deja de compilar hasta que todos se actualicen.
+          Lo que ves aquí se lee del disco del servidor en tiempo real.
+        </p>
+      </div>
+      <div class="contracts-layout">
+        <ul id="contract-list" class="contract-list"></ul>
+        <pre class="code" id="contract-code"><code>Cargando contratos…</code></pre>
+      </div>
+    </section>
 
-            </div>
+    <!-- ============ VISTA 3: ARQUITECTURA ============ -->
+    <section id="view-architecture" class="view view-architecture" role="tabpanel" hidden>
+      <div class="arch-grid">
+        <article class="arch-card arch-diagram">
+          <h2>Cómo se comunican los microservicios</h2>
+          <svg viewBox="0 0 880 330" role="img" aria-label="Diagrama: navegador, gateway, hospital-service y ambulance-service conectados por WebSocket y gRPC">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0 0L10 5L0 10z"></path>
+              </marker>
+            </defs>
+            <g class="node node-browser"><rect x="20" y="128" width="150" height="74" rx="10"></rect><text x="95" y="160">Navegador</text><text x="95" y="181" class="sub">este dashboard</text></g>
+            <g class="node node-gateway"><rect x="260" y="128" width="190" height="74" rx="10"></rect><text x="355" y="160">hospital-dashboard</text><text x="355" y="181" class="sub">gateway (BFF)</text></g>
+            <g class="node node-service"><rect x="640" y="20" width="180" height="74" rx="10"></rect><text x="730" y="52">hospital-service</text><text x="730" y="73" class="sub">puerto 50051, triaje NEWS2</text></g>
+            <g class="node node-service"><rect x="640" y="236" width="180" height="74" rx="10"></rect><text x="730" y="268">ambulance-service</text><text x="730" y="289" class="sub">puerto 50052, flota</text></g>
 
-            <!-- Panel de Decisiones de Arquitectura (Trade-Offs explicados para el profesor) -->
-            <div class="bg-[#111827]/90 border border-slate-800/80 rounded-2xl p-6 shadow-xl">
-                <h2 class="text-xs uppercase tracking-widest text-emerald-400 font-bold mb-3">Justificación Técnica del Caso de Estudio (Séptimo Semestre)</h2>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-300">
-                    <div class="bg-slate-950/50 p-3.5 rounded-xl border border-slate-800">
-                        <span class="font-bold text-white block mb-1">Contract-First (SSOT)</span>
-                        Contrato único en <code class="text-cyan-400">ambulance.proto</code>. Si cambia la BD, hay error de compilación inmediato en los microservicios.
-                    </div>
-                    <div class="bg-slate-950/50 p-3.5 rounded-xl border border-slate-800">
-                        <span class="font-bold text-white block mb-1">Cero Verbos REST</span>
-                        Se usa gRPC (HTTP/2) con serialización binaria (Protobuf). Se elimina el parseo pesado de JSON de las APIs REST tradicionales.
-                    </div>
-                    <div class="bg-slate-950/50 p-3.5 rounded-xl border border-slate-800">
-                        <span class="font-bold text-white block mb-1">Workers Asíncronos</span>
-                        Las alertas críticas se encolan y procesan en segundo plano de manera desacoplada para no bloquear la transmisión de la ambulancia.
-                    </div>
-                </div>
-            </div>
+            <path class="edge edge-ws" d="M172 165H258" marker-start="url(#arrow)" marker-end="url(#arrow)"></path>
+            <text class="edge-label" x="215" y="152">WebSocket</text>
 
-        </div>
+            <path class="edge edge-grpc" d="M450 150H540V57H638" marker-end="url(#arrow)"></path>
+            <text class="edge-label anchor-end" x="530" y="96">WatchTelemetry</text>
+            <text class="edge-kind anchor-end" x="530" y="113">server streaming</text>
 
-        <!-- Columna Derecha: Bitácora con Altura Fija y Scroll Independiente (4 columnas) -->
-        <div class="lg:col-span-4 bg-[#111827]/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl flex flex-col h-full overflow-hidden">
-            <div class="flex justify-between items-center mb-3 shrink-0">
-                <h2 class="text-xs uppercase tracking-widest text-slate-400 font-semibold">Bitácora de Alertas gRPC & Workers</h2>
-                <span class="flex h-2 w-2 relative">
-                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-            </div>
-            
-            <!-- Contenedor con altura estrictamente controlada y scroll independiente -->
-            <div id="alerts-container" class="flex-1 overflow-y-auto space-y-2.5 pr-1">
-                <div class="p-3 rounded-xl bg-slate-800/40 border border-slate-700/40 text-xs text-slate-400">
-                    <span class="font-bold text-emerald-400 block mb-0.5">Sistema Iniciado</span>
-                    Conectado al canal gRPC de la ambulancia. Monitoreando signos vitales...
-                </div>
-            </div>
-        </div>
+            <path class="edge edge-grpc" d="M450 180H540V273H638" marker-end="url(#arrow)"></path>
+            <text class="edge-label anchor-end" x="530" y="228">StartShift, TriggerScenario</text>
+            <text class="edge-kind anchor-end" x="530" y="245">unario</text>
 
-    </main>
+            <path class="edge edge-grpc" d="M730 232V96" marker-start="url(#arrow)" marker-end="url(#arrow)"></path>
+            <text class="edge-label anchor-start" x="742" y="160">StreamVitalSigns</text>
+            <text class="edge-kind anchor-start" x="742" y="177">bidireccional</text>
+          </svg>
+          <p class="note">
+            Los navegadores no pueden hablar gRPC nativo porque no controlan los frames de HTTP/2.
+            Por eso el gateway traduce: hacia adentro todo es gRPC con Protobuf binario; hacia el navegador, WebSocket.
+            No existe ningún endpoint REST ni verbos GET/POST de negocio.
+          </p>
+        </article>
 
-    <!-- Script Cliente WebSocket -->
-    <script>
-        const socket = io();
+        <article class="arch-card">
+          <h2>REST + JSON frente a gRPC + Protobuf</h2>
+          <table class="tradeoffs">
+            <thead><tr><th></th><th>REST + JSON</th><th>gRPC + Protobuf</th></tr></thead>
+            <tbody>
+              <tr><th>Qué expone</th><td>Recursos (URL + verbo)</td><td>Funciones remotas tipadas</td></tr>
+              <tr><th>Formato</th><td>Texto, se parsea en cada petición</td><td>Binario compacto (<span data-live="savings">~70 %</span> menos aquí)</td></tr>
+              <tr><th>Transporte</th><td>HTTP/1.1, una petición por conexión a la vez</td><td>HTTP/2 multiplexado: las 4–6 ambulancias comparten una sola conexión TCP</td></tr>
+              <tr><th>Streaming</th><td>Necesita WebSocket o SSE aparte</td><td>Nativo: servidor, cliente y bidireccional</td></tr>
+              <tr><th>Contrato</th><td>Opcional (OpenAPI)</td><td>Obligatorio (.proto) y genera código</td></tr>
+              <tr><th>En contra</th><td>—</td><td>No se puede leer a simple vista, el navegador necesita un gateway y depurar exige herramientas</td></tr>
+            </tbody>
+          </table>
+        </article>
 
-        const hrVal = document.getElementById('heart-rate-val');
-        const hrBar = document.getElementById('hr-bar');
-        const hrStatus = document.getElementById('hr-status');
-        const unitId = document.getElementById('unit-id');
+        <article class="arch-card">
+          <h2>Tipado de punta a punta</h2>
+          <ol class="chain">
+            <li><strong>Contrato</strong><span><code>proto/*.proto</code> define mensajes y servicios.</span></li>
+            <li><strong>Generación</strong><span><code>proto-loader-gen-types</code> crea las interfaces en <code>src/generated</code>.</span></li>
+            <li><strong>Compilación</strong><span>Si un handler devuelve un campo que no existe, <code>tsc</code> falla.</span></li>
+            <li><strong>Ejecución</strong><span>Los tipos desaparecen al compilar, así que Zod parsea cada paquete. Prueba “Falla de sensor”.</span></li>
+          </ol>
+        </article>
 
-        const spo2Val = document.getElementById('spo2-val');
-        const spo2Bar = document.getElementById('spo2-bar');
-        const spo2Status = document.getElementById('spo2-status');
+        <article class="arch-card">
+          <h2>Por qué la simulación ya no es infinita</h2>
+          <p>
+            El turno se inicia cuando entra el primer visitante y se apaga solo 45 segundos después de que
+            se va el último, o al cumplir 10 minutos. Sin nadie mirando, los tres microservicios quedan en reposo
+            y el contenedor gratuito casi no consume CPU.
+          </p>
+        </article>
+      </div>
+    </section>
+  </main>
 
-        const alertsContainer = document.getElementById('alerts-container');
+  <!-- Métricas del "cable": lo que realmente viaja por la red -->
+  <footer class="wire" id="wire">
+    <div class="wire-compare">
+      <span class="wire-title">Mismos paquetes, dos formatos</span>
+      <div class="bar"><span class="bar-label">Protobuf</span><span class="bar-track"><i id="bar-proto"></i></span><b id="bytes-proto">0 B</b></div>
+      <div class="bar bar-json"><span class="bar-label">JSON</span><span class="bar-track"><i id="bar-json"></i></span><b id="bytes-json">0 B</b></div>
+    </div>
+    <dl class="wire-stats">
+      <div><dt>Ahorro</dt><dd id="stat-savings">–</dd></div>
+      <div><dt>Paquetes</dt><dd id="stat-messages">0</dd></div>
+      <div><dt>Streams abiertos</dt><dd id="stat-streams">0</dd></div>
+      <div><dt>Rechazados por Zod</dt><dd id="stat-rejected">0</dd></div>
+    </dl>
+  </footer>
 
-        socket.on('vital-signs-update', (data) => {
-            unitId.innerText = data.ambulance_id;
-            hrVal.innerText = data.heart_rate;
-            const hrPercent = Math.min(Math.max((data.heart_rate / 200) * 100, 10), 100);
-            hrBar.style.width = hrPercent + '%';
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-            if (data.heart_rate > 120 || data.heart_rate < 50) {
-                hrVal.className = "text-5xl font-black text-rose-500 tracking-tight animate-pulse";
-                hrBar.className = "bg-rose-500 h-full transition-all duration-300";
-                hrStatus.innerHTML = `<span class="text-rose-400 font-bold">¡ALERTA CLÍNICA! Anomalía detectada en transmisión gRPC.</span>`;
-            } else {
-                hrVal.className = "text-5xl font-black text-emerald-400 tracking-tight";
-                hrBar.className = "bg-emerald-500 h-full transition-all duration-300";
-                hrStatus.innerText = "Ritmo cardíaco estable dentro de los parámetros esperados.";
-            }
-
-            spo2Val.innerText = data.blood_oxygen;
-            spo2Bar.style.width = data.blood_oxygen + '%';
-            if (data.blood_oxygen < 90) {
-                spo2Val.className = "text-5xl font-black text-amber-400 tracking-tight animate-pulse";
-                spo2Status.innerHTML = `<span class="text-amber-400 font-bold">Hipoxia detectada: Oxigenación baja.</span>`;
-            } else {
-                spo2Val.className = "text-5xl font-black text-cyan-400 tracking-tight";
-                spo2Status.innerText = "Oxigenación óptima.";
-            }
-        });
-
-        socket.on('hospital-alert', (alert) => {
-            const div = document.createElement('div');
-            let badgeColor = "bg-slate-900/90 text-slate-300 border-slate-800";
-            let iconText = "ℹ️ INFO";
-            if (alert.severity === 'CRITICAL') {
-                badgeColor = "bg-rose-950/80 text-rose-300 border-rose-900/80 shadow-md";
-                iconText = "🚨 CRÍTICO (Worker Auditado)";
-            }
-            if (alert.severity === 'MEDIUM') {
-                badgeColor = "bg-amber-950/80 text-amber-300 border-amber-900/80";
-                iconText = "⚠️ PRECAUCIÓN";
-            }
-
-            const timeString = new Date().toLocaleTimeString();
-
-            div.className = `p-3 rounded-xl border text-xs transition-all shrink-0 ${badgeColor}`;
-            div.innerHTML = `
-                <div class="flex justify-between font-bold mb-1">
-                    <span>${iconText}</span>
-                    <span class="font-mono text-[10px] text-slate-400">${timeString}</span>
-                </div>
-                <p class="mb-1">${alert.message}</p>
-                <div class="text-[10px] text-slate-400 font-mono mt-1 border-t border-slate-800 pt-1 flex justify-between">
-                    <span>ID: ${alert.alert_id}</span>
-                    <span class="text-emerald-400">Worker OK</span>
-                </div>
-            `;
-            
-            alertsContainer.prepend(div);
-
-            // Mantener un límite máximo de 20 alertas en pantalla para evitar saturación de memoria y DOM
-            if (alertsContainer.children.length > 20) {
-                alertsContainer.removeChild(alertsContainer.lastChild);
-            }
-        });
-    </script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="js/app.js"></script>
 </body>
 </html>

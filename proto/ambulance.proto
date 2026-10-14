@@ -2,25 +2,63 @@ syntax = "proto3";
 
 package neurahealth;
 
+// =====================================================================
+// CONTRATO 1 — Ambulancia ⇄ Hospital
+// Dueño: hospital-service (servidor) | Consumidor: ambulance-service
+// Tipo de RPC: streaming bidireccional sobre HTTP/2.
+// =====================================================================
+
 // Servicio gRPC para la sincronización de signos vitales de la ambulancia
 service AmbulanceSyncService {
-  // Streaming bidireccional: La ambulancia envía métricas continuas y el hospital responde con alertas o confirmaciones en tiempo real
+  // La ambulancia envía métricas continuas y el hospital responde, por el
+  // mismo canal abierto, con el triaje calculado para cada paquete.
   rpc StreamVitalSigns (stream VitalSignsRequest) returns (stream HospitalAlertResponse);
 }
 
-// Mensaje con los signos vitales enviados por la ambulancia
-message VitalSignsRequest {
-  string ambulance_id = 1;
-  double heart_rate = 2;       // Pulso en bpm
-  double ecg_voltage = 3;      // Voltaje del ECG
-  double blood_oxygen = 4;     // SpO2 porcentaje
-  int64 timestamp = 5;
+// Ritmo cardíaco detectado por el monitor de la ambulancia
+enum CardiacRhythm {
+  CARDIAC_RHYTHM_UNSPECIFIED = 0;
+  CARDIAC_RHYTHM_SINUS = 1;                     // Ritmo sinusal normal
+  CARDIAC_RHYTHM_SINUS_TACHYCARDIA = 2;         // Taquicardia sinusal
+  CARDIAC_RHYTHM_ATRIAL_FIBRILLATION = 3;       // Fibrilación auricular
+  CARDIAC_RHYTHM_VENTRICULAR_FIBRILLATION = 4;  // Fibrilación ventricular (paro)
 }
 
-// Mensaje de respuesta y alertas desde el hospital
+// Severidad clínica (alineada con la escala de alerta temprana NEWS2)
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_LOW = 1;       // NEWS2 0-4
+  SEVERITY_MEDIUM = 2;    // Un solo parámetro en rojo (3 puntos)
+  SEVERITY_HIGH = 3;      // NEWS2 5-6
+  SEVERITY_CRITICAL = 4;  // NEWS2 >= 7 o ritmo de paro
+}
+
+// Mensaje con los signos vitales enviados por la ambulancia.
+// Regla de oro de Protobuf: los números de campo NUNCA se reutilizan ni se
+// cambian; solo se agregan campos nuevos (compatibilidad hacia atrás).
+message VitalSignsRequest {
+  string ambulance_id = 1;
+  double heart_rate = 2;          // Pulso en latidos por minuto
+  double ecg_voltage = 3;         // Amplitud de la onda R en mV
+  double blood_oxygen = 4;        // SpO2 en porcentaje
+  int64 timestamp = 5;            // Epoch en milisegundos
+  int32 systolic_pressure = 6;    // Presión sistólica en mmHg
+  int32 diastolic_pressure = 7;   // Presión diastólica en mmHg
+  double body_temperature = 8;    // Temperatura en °C
+  int32 respiratory_rate = 9;     // Respiraciones por minuto
+  string patient_id = 10;
+  int32 sequence = 11;            // Número de paquete dentro del traslado
+  CardiacRhythm rhythm = 12;
+}
+
+// Respuesta del hospital para cada paquete recibido
 message HospitalAlertResponse {
   string alert_id = 1;
-  string severity = 2;         // LOW, MEDIUM, CRITICAL
+  Severity severity = 2;
   string message = 3;
   int64 timestamp = 4;
+  string ambulance_id = 5;
+  int32 triage_score = 6;         // Puntaje NEWS2 calculado por el hospital
+  string recommended_action = 7;
+  string receiving_unit = 8;      // Área del hospital que debe recibir al paciente
 }

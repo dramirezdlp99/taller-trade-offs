@@ -1,0 +1,17 @@
+{
+  "name": "taller-trade-offs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NeuraHealth: monitoreo de ambulancias con microservicios gRPC (Contract-First, Protobuf, HTTP/2).",
+  "author": "David Ramírez de la Parra",
+  "scripts": {
+    "install:all": "npm install --prefix hospital-service && npm install --prefix ambulance-service && npm install --prefix hospital-dashboard",
+    "build": "npm run build --prefix hospital-service && npm run build --prefix ambulance-service && npm run build --prefix hospital-dashboard",
+    "start": "node scripts/launcher.js",
+    "dev": "npm run build && npm start",
+    "demo:ambulance": "node ambulance-service/dist/AmbulanceClient.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

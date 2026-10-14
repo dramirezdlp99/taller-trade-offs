@@ -1,23 +1,30 @@
 {
   "name": "ambulance-service",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Microservicio gRPC de la flota: simula las ambulancias (clientes de streaming) y expone el control de turno.",
+  "main": "dist/main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "proto:gen": "proto-loader-gen-types --keepCase --longs=String --enums=String --defaults --oneofs --grpcLib=@grpc/grpc-js --includeDirs=../proto --outDir=src/generated ambulance.proto monitoring.proto fleet.proto",
+    "build": "npm run proto:gen && tsc",
+    "start": "node dist/main.js",
+    "dev": "npm run build && npm start"
   },
   "keywords": [],
-  "author": "",
+  "author": "David Ramírez de la Parra",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
     "@grpc/grpc-js": "^1.14.6",
     "@grpc/proto-loader": "^0.8.1",
-    "dotenv": "^18.0.7"
+    "dotenv": "^18.0.7",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "ts-node": "^10.9.2",
     "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

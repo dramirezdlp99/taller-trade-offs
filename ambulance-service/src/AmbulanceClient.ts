@@ -1,82 +1,135 @@
-const grpc = require('@grpc/grpc-js');
-const protoLoader = require('@grpc/proto-loader');
-const path = require('path');
+import * as grpc from '@grpc/grpc-js';
+import { ContractLoader } from './ContractLoader';
+import { VitalSignsSimulator, type SimulatedReading } from './VitalSignsSimulator';
+import type { AmbulanceSyncServiceClient } from './generated/neurahealth/AmbulanceSyncService';
+import type { HospitalAlertResponse__Output } from './generated/neurahealth/HospitalAlertResponse';
+import type { VitalSignsRequest } from './generated/neurahealth/VitalSignsRequest';
 
-// Carga del contrato gRPC
-const PROTO_PATH = path.join(__dirname, '../../proto/ambulance.proto');
-const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
-  keepCase: true,
-  longs: String,
-  enums: String,
-  defaults: true,
-  oneofs: true,
-});
-
-const protoDescriptor = grpc.loadPackageDefinition(packageDefinition);
-const neurahealthPackage = protoDescriptor.neurahealth;
+type VitalSignsChannel = grpc.ClientDuplexStream<VitalSignsRequest, HospitalAlertResponse__Output>;
 
 /**
- * Clase POO para simular el dispositivo inteligente de la ambulancia
+ * Clase POO que representa el dispositivo inteligente de UNA ambulancia.
+ * Abre un canal de streaming bidireccional con el hospital y lo mantiene
+ * vivo durante todo el traslado del paciente.
  */
-class AmbulanceClient {
-  private client: any;
-  private ambulanceId: string;
+export class AmbulanceClient {
+  private channel: VitalSignsChannel | null = null;
+  private sequence = 0;
+  private isActive = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private latestResponse: HospitalAlertResponse__Output | null = null;
 
-  constructor(serverAddress: string, ambulanceId: string) {
-    this.client = new neurahealthPackage.AmbulanceSyncService(
-      serverAddress,
-      grpc.credentials.createInsecure()
-    );
-    this.ambulanceId = ambulanceId;
+  constructor(
+    private readonly hospitalClient: AmbulanceSyncServiceClient,
+    public readonly ambulanceId: string,
+    public readonly patientId: string,
+  ) {}
+
+  public get packetsSent(): number {
+    return this.sequence;
+  }
+
+  public get lastHospitalResponse(): HospitalAlertResponse__Output | null {
+    return this.latestResponse;
   }
 
   public startTransmission(): void {
-    console.log(`[Ambulance Client]: Iniciando transmisión de signos vitales para la unidad ${this.ambulanceId}...`);
+    this.isActive = true;
+    this.openChannel();
+  }
 
-    const call = this.client.StreamVitalSigns();
+  public send(reading: SimulatedReading): void {
+    if (!this.channel || !this.isActive) return;
 
-    // Escuchar respuestas y alertas enviadas por el hospital en tiempo real
-    call.on('data', (response: any) => {
-      console.log(`[Respuesta del Hospital] Severidad: [${response.severity}] -> ${response.message}`);
+    this.sequence++;
+    this.channel.write({
+      ambulance_id: this.ambulanceId,
+      patient_id: this.patientId,
+      sequence: this.sequence,
+      timestamp: Date.now(),
+      ...reading,
     });
+  }
 
-    call.on('error', (error: Error) => {
-      console.error('[Error de Conexión con Hospital]:', error.message);
-    });
+  public stopTransmission(): void {
+    this.isActive = false;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.channel?.end();
+    this.channel = null;
+  }
 
-    call.on('end', () => {
-      console.log('[Ambulance Client]: Transmisión finalizada por el servidor.');
-    });
+  private openChannel(): void {
+    // Si el hospital aún no arrancó, el canal falla con UNAVAILABLE y se reintenta
+    const channel = this.hospitalClient.StreamVitalSigns();
+    this.channel = channel;
 
-    // Simular el envío de datos médicos cada 3 segundos
-    let sequence = 0;
-    const interval = setInterval(() => {
-      sequence++;
-      
-      // Simulamos una anomalía en el pulso en la iteración 4 para probar las alertas críticas
-      const simulatedHeartRate = sequence === 4 ? 135 : 75 + Math.floor(Math.random() * 10);
-      const simulatedOxygen = 96 + Math.floor(Math.random() * 3);
-
-      const payload = {
-        ambulance_id: this.ambulanceId,
-        heart_rate: simulatedHeartRate,
-        ecg_voltage: 1.2,
-        blood_oxygen: simulatedOxygen,
-        timestamp: Date.now(),
-      };
-
-      console.log(`[Enviando Binario Protobuf] Paquete #${sequence} -> Pulso: ${payload.heart_rate} bpm`);
-      call.write(payload);
-
-      if (sequence >= 8) {
-        clearInterval(interval);
-        call.end();
-        console.log('[Ambulance Client]: Viaje finalizado. Cerrando canal de comunicación.');
+    // Escuchar las respuestas del hospital en tiempo real (mismo canal)
+    channel.on('data', (response: HospitalAlertResponse__Output) => {
+      this.latestResponse = response;
+      if (response.severity === 'SEVERITY_CRITICAL' || response.severity === 'SEVERITY_HIGH') {
+        console.log(`[${this.ambulanceId}] Hospital indica ${response.severity}: ${response.recommended_action}`);
       }
-    }, 3000);
+    });
+
+    channel.on('error', (error: grpc.ServiceError) => {
+      if (error.code === grpc.status.CANCELLED || !this.isActive) return;
+      console.error(`[${this.ambulanceId}] Error de conexión con el hospital: ${error.details}. Reintentando...`);
+      this.scheduleReconnect();
+    });
+
+    channel.on('end', () => {
+      if (this.isActive && this.channel === channel) this.scheduleReconnect();
+    });
+  }
+
+  private scheduleReconnect(): void {
+    this.channel = null;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => {
+      if (this.isActive) this.openChannel();
+    }, 2000);
   }
 }
 
-// Ejecutar cliente simulando la ambulancia "AMB-UNIT-07"
-const clientApp = new AmbulanceClient('localhost:50051', 'AMB-UNIT-07');
-clientApp.startTransmission();
+/**
+ * Modo demostración independiente (comportamiento original del taller):
+ * `node dist/AmbulanceClient.js` envía 8 paquetes y en el 4.º simula una
+ * anomalía cardíaca para ver la alerta crítica en la consola.
+ */
+function runStandaloneDemo(): void {
+  const contracts = ContractLoader.load();
+  const address = process.env.HOSPITAL_GRPC_ADDRESS ?? 'localhost:50051';
+  const hospitalClient = new contracts.AmbulanceSyncService(address, grpc.credentials.createInsecure());
+  const simulator = new VitalSignsSimulator('CLINICAL_SCENARIO_STABLE');
+  const ambulance = new AmbulanceClient(hospitalClient, 'AMB-UNIT-07', 'PAC-0007');
+
+  console.log(`[Ambulance Client]: Transmitiendo la unidad ${ambulance.ambulanceId} hacia ${address}...`);
+  ambulance.startTransmission();
+
+  let packet = 0;
+  const interval = setInterval(() => {
+    packet++;
+    simulator.setScenario(packet === 4 ? 'CLINICAL_SCENARIO_CARDIAC_ARREST' : 'CLINICAL_SCENARIO_STABLE');
+    const reading = simulator.nextReading();
+    console.log(`[Enviando binario Protobuf] Paquete #${packet} → Pulso: ${reading.heart_rate} lpm | SpO2: ${reading.blood_oxygen} %`);
+    ambulance.send(reading);
+
+    setTimeout(() => {
+      const response = ambulance.lastHospitalResponse;
+      if (response) console.log(`   ↳ Hospital: [${response.severity}] ${response.message}`);
+    }, 300);
+
+    if (packet >= 8) {
+      clearInterval(interval);
+      setTimeout(() => {
+        ambulance.stopTransmission();
+        hospitalClient.close();
+        console.log('[Ambulance Client]: Viaje finalizado. Canal de comunicación cerrado.');
+      }, 500);
+    }
+  }, 2000);
+}
+
+if (require.main === module) {
+  runStandaloneDemo();
+}

@@ -1,0 +1,28 @@
+# Topología "ideal": cada microservicio en su PROPIO contenedor, hablando por
+# gRPC a través de la red interna de Docker. Úsalo si tienes Docker Desktop:
+#   docker compose up --build      →  http://localhost:3000
+services:
+  hospital-service:
+    build: .
+    command: ["node", "hospital-service/dist/HospitalServer.js"]
+    environment:
+      HOSPITAL_GRPC_PORT: "50051"
+
+  ambulance-service:
+    build: .
+    command: ["node", "ambulance-service/dist/main.js"]
+    environment:
+      HOSPITAL_GRPC_ADDRESS: "hospital-service:50051"
+      FLEET_GRPC_PORT: "50052"
+    depends_on: [hospital-service]
+
+  hospital-dashboard:
+    build: .
+    command: ["node", "hospital-dashboard/dist/Server.js"]
+    environment:
+      PORT: "8080"
+      HOSPITAL_GRPC_ADDRESS: "hospital-service:50051"
+      FLEET_GRPC_ADDRESS: "ambulance-service:50052"
+    ports:
+      - "3000:8080"
+    depends_on: [hospital-service, ambulance-service]
