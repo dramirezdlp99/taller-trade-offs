@@ -1,0 +1,29 @@
+# Vuelve a desplegar en Back4app cada ~40 minutos para que el link entregado
+# siga encendido mientras el profesor revisa. Copia main en la rama "deploy"
+# con un commit vacío; main queda intacta. Desactívalo después de la calificación.
+name: Mantener despliegue activo
+
+on:
+  schedule:
+    - cron: "*/40 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Publicar main en la rama deploy con un commit vacío
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B deploy
+          git commit --allow-empty -m "Redeploy automático $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push --force origin deploy
