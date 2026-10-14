@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NeuraHealth | Centro de Comando de Ambulancias (gRPC Core)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body class="bg-[#0b0f19] text-slate-100 font-sans antialiased h-screen flex flex-col overflow-hidden">
+
+    <!-- Top Navbar / Header Clínico -->
+    <header class="bg-[#111827] border-b border-slate-800 px-6 py-3 flex justify-between items-center shadow-md shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="h-3.5 w-3.5 bg-emerald-500 rounded-full animate-ping"></div>
+            <div>
+                <h1 class="text-base font-bold tracking-wider text-emerald-400">NEURAHEALTH <span class="text-[10px] bg-emerald-950 text-emerald-300 px-2 py-0.5 rounded border border-emerald-800">gRPC streaming (HTTP/2)</span></h1>
+                <p class="text-[11px] text-slate-400">Red Inteligente de Sincronización de Ambulancias</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-3 text-xs">
+            <div class="bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                <span class="text-slate-400">Unidad Activa:</span> <span id="unit-id" class="text-white font-mono font-bold">AMB-UNIT-01</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Workspace (Grid Principal con altura fija para evitar desbordamientos) -->
+    <main class="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1600px] mx-auto w-full overflow-hidden">
+        
+        <!-- Columna Izquierda: Telemetría de la Ambulancia en Tiempo Real (8 columnas) -->
+        <div class="lg:col-span-8 flex flex-col gap-6 overflow-y-auto pr-2">
+            
+            <!-- Grid de Signos Vitales -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                <!-- Tarjeta Ritmo Cardíaco -->
+                <div class="bg-[#111827]/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl flex flex-col justify-between relative">
+                    <div class="absolute top-0 right-0 bg-slate-800/50 px-3 py-1 text-[10px] font-mono text-slate-400 rounded-bl-xl border-l border-b border-slate-700">
+                        Protobuf: VitalSignsRequest.heart_rate
+                    </div>
+                    <div>
+                        <span class="text-xs uppercase tracking-widest text-slate-400 font-semibold">Ritmo Cardíaco (ECG)</span>
+                        <div class="mt-3 flex items-baseline space-x-2">
+                            <span id="heart-rate-val" class="text-5xl font-black text-emerald-400 tracking-tight">--</span>
+                            <span class="text-slate-400 font-medium text-sm">BPM</span>
+                        </div>
+                    </div>
+                    <div class="mt-5">
+                        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                            <div id="hr-bar" class="bg-emerald-500 h-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <p id="hr-status" class="text-xs mt-2 text-slate-400">Esperando flujo binario gRPC...</p>
+                    </div>
+                </div>
+
+                <!-- Tarjeta Saturación de Oxígeno -->
+                <div class="bg-[#111827]/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl flex flex-col justify-between relative">
+                    <div class="absolute top-0 right-0 bg-slate-800/50 px-3 py-1 text-[10px] font-mono text-slate-400 rounded-bl-xl border-l border-b border-slate-700">
+                        Protobuf: VitalSignsRequest.blood_oxygen
+                    </div>
+                    <div>
+                        <span class="text-xs uppercase tracking-widest text-slate-400 font-semibold">Saturación de Oxígeno (SpO2)</span>
+                        <div class="mt-3 flex items-baseline space-x-2">
+                            <span id="spo2-val" class="text-5xl font-black text-cyan-400 tracking-tight">--</span>
+                            <span class="text-slate-400 font-medium text-sm">%</span>
+                        </div>
+                    </div>
+                    <div class="mt-5">
+                        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                            <div id="spo2-bar" class="bg-cyan-400 h-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <p id="spo2-status" class="text-xs mt-2 text-slate-400">Canal bidireccional activo</p>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Panel de Decisiones de Arquitectura (Trade-Offs explicados para el profesor) -->
+            <div class="bg-[#111827]/90 border border-slate-800/80 rounded-2xl p-6 shadow-xl">
+                <h2 class="text-xs uppercase tracking-widest text-emerald-400 font-bold mb-3">Justificación Técnica del Caso de Estudio (Séptimo Semestre)</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-300">
+                    <div class="bg-slate-950/50 p-3.5 rounded-xl border border-slate-800">
+                        <span class="font-bold text-white block mb-1">Contract-First (SSOT)</span>
+                        Contrato único en <code class="text-cyan-400">ambulance.proto</code>. Si cambia la BD, hay error de compilación inmediato en los microservicios.
+                    </div>
+                    <div class="bg-slate-950/50 p-3.5 rounded-xl border border-slate-800">
+                        <span class="font-bold text-white block mb-1">Cero Verbos REST</span>
+                        Se usa gRPC (HTTP/2) con serialización binaria (Protobuf). Se elimina el parseo pesado de JSON de las APIs REST tradicionales.
+                    </div>
+                    <div class="bg-slate-950/50 p-3.5 rounded-xl border border-slate-800">
+                        <span class="font-bold text-white block mb-1">Workers Asíncronos</span>
+                        Las alertas críticas se encolan y procesan en segundo plano de manera desacoplada para no bloquear la transmisión de la ambulancia.
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Columna Derecha: Bitácora con Altura Fija y Scroll Independiente (4 columnas) -->
+        <div class="lg:col-span-4 bg-[#111827]/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl flex flex-col h-full overflow-hidden">
+            <div class="flex justify-between items-center mb-3 shrink-0">
+                <h2 class="text-xs uppercase tracking-widest text-slate-400 font-semibold">Bitácora de Alertas gRPC & Workers</h2>
+                <span class="flex h-2 w-2 relative">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+            </div>
+            
+            <!-- Contenedor con altura estrictamente controlada y scroll independiente -->
+            <div id="alerts-container" class="flex-1 overflow-y-auto space-y-2.5 pr-1">
+                <div class="p-3 rounded-xl bg-slate-800/40 border border-slate-700/40 text-xs text-slate-400">
+                    <span class="font-bold text-emerald-400 block mb-0.5">Sistema Iniciado</span>
+                    Conectado al canal gRPC de la ambulancia. Monitoreando signos vitales...
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Script Cliente WebSocket -->
+    <script>
+        const socket = io();
+
+        const hrVal = document.getElementById('heart-rate-val');
+        const hrBar = document.getElementById('hr-bar');
+        const hrStatus = document.getElementById('hr-status');
+        const unitId = document.getElementById('unit-id');
+
+        const spo2Val = document.getElementById('spo2-val');
+        const spo2Bar = document.getElementById('spo2-bar');
+        const spo2Status = document.getElementById('spo2-status');
+
+        const alertsContainer = document.getElementById('alerts-container');
+
+        socket.on('vital-signs-update', (data) => {
+            unitId.innerText = data.ambulance_id;
+            hrVal.innerText = data.heart_rate;
+            const hrPercent = Math.min(Math.max((data.heart_rate / 200) * 100, 10), 100);
+            hrBar.style.width = hrPercent + '%';
+
+            if (data.heart_rate > 120 || data.heart_rate < 50) {
+                hrVal.className = "text-5xl font-black text-rose-500 tracking-tight animate-pulse";
+                hrBar.className = "bg-rose-500 h-full transition-all duration-300";
+                hrStatus.innerHTML = `<span class="text-rose-400 font-bold">¡ALERTA CLÍNICA! Anomalía detectada en transmisión gRPC.</span>`;
+            } else {
+                hrVal.className = "text-5xl font-black text-emerald-400 tracking-tight";
+                hrBar.className = "bg-emerald-500 h-full transition-all duration-300";
+                hrStatus.innerText = "Ritmo cardíaco estable dentro de los parámetros esperados.";
+            }
+
+            spo2Val.innerText = data.blood_oxygen;
+            spo2Bar.style.width = data.blood_oxygen + '%';
+            if (data.blood_oxygen < 90) {
+                spo2Val.className = "text-5xl font-black text-amber-400 tracking-tight animate-pulse";
+                spo2Status.innerHTML = `<span class="text-amber-400 font-bold">Hipoxia detectada: Oxigenación baja.</span>`;
+            } else {
+                spo2Val.className = "text-5xl font-black text-cyan-400 tracking-tight";
+                spo2Status.innerText = "Oxigenación óptima.";
+            }
+        });
+
+        socket.on('hospital-alert', (alert) => {
+            const div = document.createElement('div');
+            let badgeColor = "bg-slate-900/90 text-slate-300 border-slate-800";
+            let iconText = "ℹ️ INFO";
+            if (alert.severity === 'CRITICAL') {
+                badgeColor = "bg-rose-950/80 text-rose-300 border-rose-900/80 shadow-md";
+                iconText = "🚨 CRÍTICO (Worker Auditado)";
+            }
+            if (alert.severity === 'MEDIUM') {
+                badgeColor = "bg-amber-950/80 text-amber-300 border-amber-900/80";
+                iconText = "⚠️ PRECAUCIÓN";
+            }
+
+            const timeString = new Date().toLocaleTimeString();
+
+            div.className = `p-3 rounded-xl border text-xs transition-all shrink-0 ${badgeColor}`;
+            div.innerHTML = `
+                <div class="flex justify-between font-bold mb-1">
+                    <span>${iconText}</span>
+                    <span class="font-mono text-[10px] text-slate-400">${timeString}</span>
+                </div>
+                <p class="mb-1">${alert.message}</p>
+                <div class="text-[10px] text-slate-400 font-mono mt-1 border-t border-slate-800 pt-1 flex justify-between">
+                    <span>ID: ${alert.alert_id}</span>
+                    <span class="text-emerald-400">Worker OK</span>
+                </div>
+            `;
+            
+            alertsContainer.prepend(div);
+
+            // Mantener un límite máximo de 20 alertas en pantalla para evitar saturación de memoria y DOM
+            if (alertsContainer.children.length > 20) {
+                alertsContainer.removeChild(alertsContainer.lastChild);
+            }
+        });
+    </script>
+</body>
+</html>

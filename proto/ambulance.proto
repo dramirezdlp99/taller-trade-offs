@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package neurahealth;
+
+// Servicio gRPC para la sincronización de signos vitales de la ambulancia
+service AmbulanceSyncService {
+  // Streaming bidireccional: La ambulancia envía métricas continuas y el hospital responde con alertas o confirmaciones en tiempo real
+  rpc StreamVitalSigns (stream VitalSignsRequest) returns (stream HospitalAlertResponse);
+}
+
+// Mensaje con los signos vitales enviados por la ambulancia
+message VitalSignsRequest {
+  string ambulance_id = 1;
+  double heart_rate = 2;       // Pulso en bpm
+  double ecg_voltage = 3;      // Voltaje del ECG
+  double blood_oxygen = 4;     // SpO2 porcentaje
+  int64 timestamp = 5;
+}
+
+// Mensaje de respuesta y alertas desde el hospital
+message HospitalAlertResponse {
+  string alert_id = 1;
+  string severity = 2;         // LOW, MEDIUM, CRITICAL
+  string message = 3;
+  int64 timestamp = 4;
+}

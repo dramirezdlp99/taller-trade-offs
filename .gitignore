@@ -1,0 +1,13 @@
+# Dependencias
+node_modules/
+**/node_modules/
+
+# Archivos de compilación de TypeScript
+dist/
+**/dist/
+
+# Entornos y logs
+.env
+*.log
+npm-debug.log*
+.DS_Store
